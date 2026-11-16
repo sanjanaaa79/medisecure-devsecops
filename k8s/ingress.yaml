@@ -1,0 +1,17 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: medisecure-ingress
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /vle9
+        pathType: Prefix
+        backend:
+          service:
+            name: medisecure-service
+            port:
+              number: 5000
