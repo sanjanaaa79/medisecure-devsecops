@@ -1,15 +1,18 @@
 FROM python:3.11-alpine
 
+# Apply all Alpine OS security upgrades
+RUN apk update && apk upgrade --no-cache
+
 # Create secure non-root user
 RUN adduser -D -u 10001 appuser
 
 WORKDIR /app
 
-# Ensure pip, setuptools, wheel are upgraded to patched versions
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel jaraco.context
-
+# Install application dependencies and strip build tooling to achieve ZERO vulnerabilities
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip uninstall -y setuptools wheel pip \
+    && rm -rf /root/.cache
 
 COPY app.py .
 RUN chown -R appuser:appuser /app
