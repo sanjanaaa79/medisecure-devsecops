@@ -22,36 +22,6 @@ with open(os.path.join(base_dir, 'k8s', 'ingress.yaml'), 'r', encoding='utf-8') 
 with open(os.path.join(base_dir, 'run_pipeline.sh'), 'r', encoding='utf-8') as f:
     pipe_sh = f.read()
 
-groovy_script = """import jenkins.model.*
-import hudson.model.*
-import hudson.tasks.Shell
-
-def instance = Jenkins.getInstance()
-def jobName = "vle9"
-def existingJob = instance.getItem(jobName)
-if (existingJob != null) {
-    existingJob.delete()
-}
-
-def job = instance.createProject(FreeStyleProject.class, jobName)
-job.setDescription("Secure DevOps (DevSecOps) Implementation in a Healthcare System - MediSecure with Trivy Security Gate (VLE 9)")
-
-def buildScript = '''#!/bin/bash
-/bin/bash /opt/vle9/run_pipeline.sh
-'''
-
-job.getBuildersList().add(new Shell(buildScript))
-job.save()
-
-def primaryView = instance.getPrimaryView()
-if (primaryView != null && primaryView instanceof ListView) {
-    primaryView.setIncludeRegex(".*")
-}
-
-instance.save()
-println("--> vle9 DevSecOps Job created successfully!")
-"""
-
 setup_cmds = [
     "mkdir -p /opt/vle9/app /opt/vle9/k8s",
     f"cat << 'EOF' > /opt/vle9/app/app.py\n{app_py}\nEOF",
@@ -62,32 +32,26 @@ setup_cmds = [
     f"cat << 'EOF' > /opt/vle9/k8s/ingress.yaml\n{k8s_ing}\nEOF",
     f"cat << 'EOF' > /opt/vle9/run_pipeline.sh\n{pipe_sh}\nEOF",
     "chmod +x /opt/vle9/run_pipeline.sh",
-    "chown -R jenkins:jenkins /opt/vle9",
-    f"cat << 'EOF' > /var/lib/jenkins/init.groovy.d/06_vle9_job.groovy\n{groovy_script}\nEOF",
-    "chown jenkins:jenkins /var/lib/jenkins/init.groovy.d/06_vle9_job.groovy",
-    "systemctl restart jenkins",
-    "sleep 12",
-    "for i in {1..30}; do if curl -s http://localhost:8080/ > /dev/null; then echo 'Jenkins is up and ready!'; break; fi; sleep 2; done"
+    "chown -R jenkins:jenkins /opt/vle9"
 ]
 
-print("1. Deploying VLE 9 files and updating Jenkins with vle9 job...")
-r1 = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': setup_cmds}, TimeoutSeconds=300)
+print("1. Syncing updated Dockerfile and manifests to /opt/vle9...")
+r1 = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': setup_cmds}, TimeoutSeconds=120)
 cmd_id1 = r1['Command']['CommandId']
 while True:
-    time.sleep(6)
+    time.sleep(5)
     inv1 = ssm.get_command_invocation(CommandId=cmd_id1, InstanceId=instance_id)
     if inv1['Status'] in ['Success', 'Failed', 'TimedOut', 'Cancelled']:
-        print("Setup Status:", inv1['Status'])
-        print(inv1.get('StandardOutputContent',''))
+        print("Sync Status:", inv1['Status'])
         break
 
-print("\n2. Triggering Jenkins build for vle9 (DevSecOps with Trivy)...")
+print("\n2. Triggering Jenkins build #2 for vle9 (DevSecOps with Trivy Gate)...")
 build_cmds = [
     "curl -u admin:admin123 -X POST http://localhost:8080/job/vle9/build",
-    "sleep 5",
-    "for i in {1..60}; do BUILDING=$(curl -s -u admin:admin123 http://localhost:8080/job/vle9/lastBuild/api/json | grep -o '\"building\":true' || echo ''); if [ -z \"$BUILDING\" ]; then echo 'Build #1 completed!'; break; fi; echo \"DevSecOps Pipeline in progress... ($i/60)\"; sleep 5; done",
-    "echo '=== DevSecOps Console Log (Last 60 lines) ==='",
-    "tail -n 60 /var/lib/jenkins/jobs/vle9/builds/1/log",
+    "sleep 6",
+    "for i in {1..50}; do BUILDING=$(curl -s -u admin:admin123 http://localhost:8080/job/vle9/lastBuild/api/json | grep -o '\"building\":true' || echo ''); if [ -z \"$BUILDING\" ]; then echo 'Build completed!'; break; fi; echo \"DevSecOps Pipeline running... ($i/50)\"; sleep 4; done",
+    "echo '=== DevSecOps Pipeline Console Log ==='",
+    "curl -s -u admin:admin123 http://localhost:8080/job/vle9/lastBuild/consoleText | tail -n 45",
     "echo ''",
     "echo '=== Testing Live NodePort 30090 ==='",
     "curl -s http://localhost:30090/",
@@ -96,7 +60,8 @@ build_cmds = [
     "curl -s http://localhost/vle9/",
     "echo ''",
     "echo '=== Kubernetes Pods Status ==='",
-    "sudo kubectl get pods -l app=medisecure -o wide"
+    "sudo kubectl get pods -l app=medisecure -o wide",
+    "sudo kubectl get svc medisecure-service"
 ]
 
 r2 = ssm.send_command(InstanceIds=[instance_id], DocumentName='AWS-RunShellScript', Parameters={'commands': build_cmds}, TimeoutSeconds=400)
